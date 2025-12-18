@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>SKU 工具：速度/訂單/美國總數/可銷售天數 + 下單清單 + 台灣廠篩選</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", Arial, "Noto Sans TC", sans-serif; }
+    body { margin: 24px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    h2 { font-size: 14px; margin: 18px 0 8px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+    textarea { width: 100%; min-height: 180px; padding: 12px; font-size: 13px; line-height: 1.4; }
+    button { padding: 8px 12px; cursor: pointer; }
+    label, select, input { font-size: 12px; }
+    select, input[type="number"] { padding: 6px; }
+    .hint { color: #555; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+    .tableWrap { max-height: 520px; overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; }
+    th { background: #f6f6f6; text-align: left; position: sticky; top: 0; }
+    .bad { background: #fff3f3; }
+    .ok  { background: #f6fff6; }
+    .warn { background: #fff9e6; }
+    .count { font-weight: 600; }
+    .footer { margin-top: 10px; font-size: 12px; color: #666; }
+    code { background: #f4f4f4; padding: 1px 4px; border-radius: 4px; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ccc; border-radius:999px; font-size:12px; color:#333; }
+    details summary { cursor: pointer; user-select: none; }
+    details[open] summary { margin-bottom: 8px; }
+    .modeTag { display:inline-block; padding:2px 8px; border:1px solid #aaa; border-radius:999px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>SKU 自動整理：速度 / 訂單 / 美國總數 / 可銷售天數 + 下單清單</h1>
+
+  <div class="row">
+    <button id="btnBuild">整理（重建表格）</button>
+    <button id="btnClear">清空</button>
+
+    <label style="display:flex; gap:6px; align-items:center;">
+      <input type="checkbox" id="chkDedupe" checked />
+      H10 去重（以 ASIN+SKU）
+    </label>
+    <label style="display:flex; gap:6px; align-items:center;">
+      <input type="checkbox" id="chkMissingOrderAsZero" checked />
+      H10 找不到訂單時填 0
+    </label>
+    <label style="display:flex; gap:6px; align-items:center;">
+      <input type="checkbox" id="chkMissingUsAsBlank" />
+      H10 找不到美國總數時留空（不勾選則填 0）
+    </label>
+    <label style="display:flex; gap:6px; align-items:center;">
+      <input type="checkbox" id="chkNormalizeSku" checked />
+      SKU 正規化（去空白、轉大寫）
+    </label>
+  </div>
+
+  <div class="row">
+    <label>主表排序：</label>
+    <select id="sortMode">
+      <option value="normal">正常（速度由大到小）</option>
+      <option value="days_asc">可銷售天數由小到大</option>
+    </select>
+
+    <label>下單門檻（天）：</label>
+    <input id="daysThreshold" type="number" min="1" step="1" value="180" />
+
+    <span class="hint">可銷售天數 = (美國總數 + 訂單) ÷ 速度</span>
+  </div>
+
+  <div class="row">
+    <label>工廠篩選：</label>
+    <button id="btnHideTW">隱藏台灣廠（E 開頭）</button>
+    <button id="btnOnlyTW">只看台灣廠（E 開頭）</button>
+    <button id="btnShowAll">顯示全部</button>
+    <span class="modeTag" id="factoryModeTag">目前：顯示全部</span>
+    <span class="hint">提示：此篩選會套用在「下單清單 / 主表 / 新品表」</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>① Helium 10 原始文字（解析 SKU / ASIN / 速度）</h2>
+      <div class="hint">
+        會抓取 <code>ASIN(10碼)</code> + 緊接其後的 <code>SKU</code>，並取該位置後面第一個數字作為速度。
+      </div>
+      <textarea id="inputH10" placeholder="貼 Helium 10 內容..."></textarea>
+    </div>
+
+    <div class="card">
+      <h2>② 訂單清單（解析 SKU / 訂單）</h2>
+      <div class="hint">
+        Tab/空白皆可。每行第 1 欄是 SKU；數量只從「SKU 後面欄位」抓數字。重複 SKU 會加總。
+      </div>
+      <textarea id="inputOrders" placeholder="例如：
+AFA11AM	5040
+AFA12AM	27360
+TTS05AM-1	170100
+..."></textarea>
+    </div>
+
+    <div class="card">
+      <h2>③ 美國總數（解析 SKU / 美國總數）</h2>
+      <div class="hint">
+        Tab/空白皆可。每行第 1 欄是 SKU；數量只從「SKU 後面欄位」抓數字。重複 SKU 會加總。
+      </div>
+      <textarea id="inputUS" placeholder="例如：
+TTS05AM-1 57223
+TTR01AM-4 14125
+..."></textarea>
+    </div>
+
+    <!-- 180天內清單 -->
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <h2 style="margin:0;">④ 門檻內可售品項：建議下單清單</h2>
+          <div class="hint">只抓「可銷售天數 <= 門檻」且速度 > 0 的 SKU</div>
+        </div>
+        <div class="hint">
+          筆數：<span class="count" id="countReorder">0</span>
+          <span class="pill" id="sumReorderAvail">可售總量(美國+訂單)：0</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnCopyReorderTSV">複製下單清單 TSV</button>
+        <button id="btnDownloadReorderCSV">下載下單清單 CSV</button>
+      </div>
+
+      <div class="tableWrap" id="reorderTableWrap"></div>
+    </div>
+
+    <!-- 主表 -->
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <h2 style="margin:0;">⑤ 主表（H10 產品）</h2>
+          <div class="hint">SKU / ASIN / 速度 / 訂單 / 美國總數 / 可銷售天數</div>
+        </div>
+        <div class="hint">
+          筆數：<span class="count" id="countMain">0</span>
+          <span class="pill" id="sumOrdersMain">訂單總和：0</span>
+          <span class="pill" id="sumUsMain">美國總數總和：0</span>
+          <span class="pill" id="sumAvailMain">可售總量(美國+訂單)：0</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnCopyMainTSV">複製主表 TSV</button>
+        <button id="btnDownloadMainCSV">下載主表 CSV</button>
+      </div>
+
+      <div class="tableWrap" id="mainTableWrap"></div>
+    </div>
+
+    <!-- 新品（訂單有但H10沒有） -->
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <h2 style="margin:0;">⑥ 新品（訂單有，但 H10 沒有）</h2>
+          <div class="hint">SKU / 訂單 / 美國總數(若有)</div>
+        </div>
+        <div class="hint">
+          筆數：<span class="count" id="countNewOrder">0</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnCopyNewOrderTSV">複製新品(訂單) TSV</button>
+        <button id="btnDownloadNewOrderCSV">下載新品(訂單) CSV</button>
+      </div>
+
+      <div class="tableWrap" id="newOrderWrap"></div>
+    </div>
+
+    <!-- 新品（美國總數有但H10沒有且訂單也沒有） 預設收折 -->
+    <div class="card">
+      <details id="newUSDetails">
+        <summary>
+          <strong>⑦ 新品（美國總數有，但 H10 沒有，且訂單也沒有）</strong>
+          <span class="hint">（預設收折，點此展開）</span>
+        </summary>
+
+        <div class="row" style="justify-content: space-between;">
+          <div class="hint">SKU / 美國總數</div>
+          <div class="hint">
+            筆數：<span class="count" id="countNewUS">0</span>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="btnCopyNewUSTSV">複製新品(美國總數) TSV</button>
+          <button id="btnDownloadNewUSCSV">下載新品(美國總數) CSV</button>
+        </div>
+
+        <div class="tableWrap" id="newUSWrap"></div>
+      </details>
+    </div>
+  </div>
+
+  <div class="footer">
+    註：速度為 0 或抓不到速度 → 不計算可銷售天數，且不會進入「下單清單」。
+  </div>
+
+<script>
+(() => {
+  const h10El = document.getElementById('inputH10');
+  const ordersEl = document.getElementById('inputOrders');
+  const usEl = document.getElementById('inputUS');
+
+  const chkDedupe = document.getElementById('chkDedupe');
+  const chkMissingOrderAsZero = document.getElementById('chkMissingOrderAsZero');
+  const chkMissingUsAsBlank = document.getElementById('chkMissingUsAsBlank');
+  const chkNormalizeSku = document.getElementById('chkNormalizeSku');
+
+  const sortModeEl = document.getElementById('sortMode');
+  const daysThresholdEl = document.getElementById('daysThreshold');
+
+  const mainWrap = document.getElementById('mainTableWrap');
+  const reorderWrap = document.getElementById('reorderTableWrap');
+  const newOrderWrap = document.getElementById('newOrderWrap');
+  const newUSWrap = document.getElementById('newUSWrap');
+
+  const countMainEl = document.getElementById('countMain');
+  const countReorderEl = document.getElementById('countReorder');
+  const countNewOrderEl = document.getElementById('countNewOrder');
+  const countNewUSEl = document.getElementById('countNewUS');
+
+  const sumOrdersMainEl = document.getElementById('sumOrdersMain');
+  const sumUsMainEl = document.getElementById('sumUsMain');
+  const sumAvailMainEl = document.getElementById('sumAvailMain');
+  const sumReorderAvailEl = document.getElementById('sumReorderAvail');
+
+  const factoryModeTag = document.getElementById('factoryModeTag');
+  const newUSDetails = document.getElementById('newUSDetails');
+
+  // 工廠篩選狀態：all | hideTW | onlyTW
+  let factoryMode = "all";
+
+  /** @type {{sku:string, asin:string, speed:(number|null), order:(number|null), us:(number|null), avail:(number|null), days:(number|null)}[]} */
+  let mainRowsAll = [];
+  /** @type {{sku:string, asin:string, speed:number, order:number, us:number, avail:number, days:number}[]} */
+  let reorderRowsAll = [];
+  /** @type {{sku:string, order:number, us:(number|null)}[]} */
+  let newOrderRowsAll = [];
+  /** @type {{sku:string, us:number}[]} */
+  let newUSRowsAll = [];
+
+  function escapeHtml(s) {
+    return (s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function normalizeNumber(s) {
+    if (s === null || s === undefined) return null;
+    const cleaned = String(s).replace(/,/g, '');
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  function normalizeSku(sku) {
+    if (!chkNormalizeSku.checked) return String(sku ?? "");
+    return String(sku ?? "").trim().toUpperCase();
+  }
+  function fmtDays(n) {
+    if (n === null || n === undefined) return "";
+    return (Math.round(n * 10) / 10).toFixed(1);
+  }
+  function isTaiwanFactorySKU(sku) {
+    const s = String(sku ?? "");
+    return s.length > 0 && s[0].toUpperCase() === "E";
+  }
+
+  function applyFactoryFilter(list) {
+    if (factoryMode === "all") return list;
+    if (factoryMode === "hideTW") return list.filter(r => !isTaiwanFactorySKU(r.sku));
+    if (factoryMode === "onlyTW") return list.filter(r => isTaiwanFactorySKU(r.sku));
+    return list;
+  }
+
+  function updateFactoryTag() {
+    if (factoryMode === "all") factoryModeTag.textContent = "目前：顯示全部";
+    if (factoryMode === "hideTW") factoryModeTag.textContent = "目前：隱藏台灣廠（E 開頭）";
+    if (factoryMode === "onlyTW") factoryModeTag.textContent = "目前：只看台灣廠（E 開頭）";
+  }
+
+  function parseH10ToRows(raw) {
+    const re = /([A-Z0-9]{10})([A-Z0-9][A-Z0-9-]{1,})/g;
+    const found = [];
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      const asin = m[1];
+      const sku  = normalizeSku(m[2]);
+
+      const lookahead = raw.slice(re.lastIndex, re.lastIndex + 400);
+      const numMatch = lookahead.match(/(\d+(?:,\d{3})*(?:\.\d+)?)/);
+      const speed = numMatch ? normalizeNumber(numMatch[1]) : null;
+
+      found.push({ sku, asin, speed, order: null, us: null, avail: null, days: null });
+    }
+    return found;
+  }
+
+  function dedupeH10(list) {
+    const seen = new Set();
+    const out = [];
+    for (const r of list) {
+      const key = `${r.asin}__${r.sku}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+    return out;
+  }
+
+  function parseSkuNumberMap(raw) {
+    const map = new Map();
+    const lines = (raw || "").split(/\r?\n/);
+
+    for (let line of lines) {
+      line = line.trim();
+      if (!line) continue;
+
+      const lower = line.toLowerCase();
+      if (lower.includes("productcode") || lower.includes("品號") ||
+          lower.includes("裝櫃日") || lower.includes("預計到港日") ||
+          lower.includes("美國總數") || (lower.includes("sku") && lower.includes("總數"))) continue;
+
+      let cols = line.split(/\t+/).map(s => s.trim()).filter(Boolean);
+      if (cols.length < 2) cols = line.split(/\s+/).map(s => s.trim()).filter(Boolean);
+      if (cols.length < 2) continue;
+
+      const sku = normalizeSku(cols[0]);
+      if (!/^[A-Z0-9][A-Z0-9-]{2,}$/i.test(sku)) continue;
+
+      const tail = cols.slice(1).join(" ");
+      const nums = tail.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g);
+      if (!nums || nums.length === 0) continue;
+
+      const val = normalizeNumber(nums[nums.length - 1]);
+      if (val === null) continue;
+
+      map.set(sku, (map.get(sku) ?? 0) + val);
+    }
+    return map;
+  }
+
+  function computeDerived(r) {
+    const order = (r.order ?? 0);
+    const us = (r.us ?? 0);
+    r.avail = order + us;
+
+    if (r.speed === null || r.speed <= 0) {
+      r.days = null;
+      return;
+    }
+    r.days = r.avail / r.speed;
+  }
+
+  function sortMain(rows) {
+    const mode = sortModeEl.value;
+    if (mode === "days_asc") {
+      rows.sort((a,b) => {
+        const ad = (a.days === null ? Infinity : a.days);
+        const bd = (b.days === null ? Infinity : b.days);
+        if (ad !== bd) return ad - bd;
+        const as = (a.speed === null ? -Infinity : a.speed);
+        const bs = (b.speed === null ? -Infinity : b.speed);
+        return bs - as;
+      });
+      return;
+    }
+    rows.sort((a,b) => {
+      const as = (a.speed === null ? -Infinity : a.speed);
+      const bs = (b.speed === null ? -Infinity : b.speed);
+      return bs - as;
+    });
+  }
+
+  function buildTables() {
+    const rawH10 = h10El.value || "";
+    const rawOrders = ordersEl.value || "";
+    const rawUS = usEl.value || "";
+
+    let h10Rows = parseH10ToRows(rawH10);
+    if (chkDedupe.checked) h10Rows = dedupeH10(h10Rows);
+
+    const orderMap = parseSkuNumberMap(rawOrders);
+    const usMap = parseSkuNumberMap(rawUS);
+
+    const h10SkuSet = new Set(h10Rows.map(r => r.sku));
+
+    for (const r of h10Rows) {
+      const o = orderMap.get(r.sku);
+      const u = usMap.get(r.sku);
+
+      r.order = (o === undefined) ? (chkMissingOrderAsZero.checked ? 0 : null) : o;
+      if (u === undefined) r.us = chkMissingUsAsBlank.checked ? null : 0;
+      else r.us = u;
+
+      computeDerived(r);
+    }
+
+    const newOrder = [];
+    for (const [sku, qty] of orderMap.entries()) {
+      if (!h10SkuSet.has(sku)) {
+        const u = usMap.get(sku);
+        newOrder.push({ sku, order: qty, us: (u === undefined ? null : u) });
+      }
+    }
+
+    const newUS = [];
+    for (const [sku, u] of usMap.entries()) {
+      if (!h10SkuSet.has(sku) && !orderMap.has(sku)) {
+        newUS.push({ sku, us: u });
+      }
+    }
+
+    const threshold = Math.max(1, Number(daysThresholdEl.value || 180));
+    const reorder = h10Rows
+      .filter(r => r.days !== null && r.days <= threshold && r.speed !== null && r.speed > 0)
+      .map(r => ({
+        sku: r.sku,
+        asin: r.asin,
+        speed: r.speed,
+        order: (r.order ?? 0),
+        us: (r.us ?? 0),
+        avail: (r.avail ?? 0),
+        days: (r.days ?? 0)
+      }));
+
+    sortMain(h10Rows);
+    reorder.sort((a,b) => a.days - b.days);
+    newOrder.sort((a,b) => b.order - a.order);
+    newUS.sort((a,b) => b.us - a.us);
+
+    mainRowsAll = h10Rows;
+    reorderRowsAll = reorder;
+    newOrderRowsAll = newOrder;
+    newUSRowsAll = newUS;
+
+    renderAll();
+  }
+
+  function sum(list, key) {
+    return list.reduce((acc, r) => acc + (Number(r[key] ?? 0) || 0), 0);
+  }
+
+  function renderAll() {
+    renderReorder();
+    renderMain();
+    renderNewOrder();
+    renderNewUS();
+  }
+
+  function renderReorder() {
+    const rows = applyFactoryFilter(reorderRowsAll);
+    countReorderEl.textContent = String(rows.length);
+    sumReorderAvailEl.textContent = `可售總量(美國+訂單)：${sum(rows, "avail")}`;
+
+    if (rows.length === 0) { reorderWrap.innerHTML = ""; return; }
+
+    const body = rows.map((r, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${escapeHtml(r.sku)}</td>
+        <td>${escapeHtml(r.asin)}</td>
+        <td class="ok">${escapeHtml(String(r.speed))}</td>
+        <td class="ok">${escapeHtml(String(r.order))}</td>
+        <td class="ok">${escapeHtml(String(r.us))}</td>
+        <td class="ok">${escapeHtml(String(r.avail))}</td>
+        <td class="warn">${escapeHtml(fmtDays(r.days))}</td>
+      </tr>
+    `).join("");
+
+    reorderWrap.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>SKU</th><th>ASIN</th><th>速度</th><th>訂單</th><th>美國總數</th><th>可售總量</th><th>可銷售天數</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+  }
+
+  function renderMain() {
+    const rows = applyFactoryFilter(mainRowsAll);
+    countMainEl.textContent = String(rows.length);
+    sumOrdersMainEl.textContent = `訂單總和：${sum(rows, "order")}`;
+    sumUsMainEl.textContent = `美國總數總和：${sum(rows, "us")}`;
+    sumAvailMainEl.textContent = `可售總量(美國+訂單)：${sum(rows, "avail")}`;
+
+    if (rows.length === 0) { mainWrap.innerHTML = ""; return; }
+
+    const body = rows.map((r, idx) => {
+      const speedCell = (r.speed === null) ? `<td class="bad">(未抓到)</td>` : `<td class="ok">${escapeHtml(String(r.speed))}</td>`;
+      const orderCell = (r.order === null) ? `<td class="bad">(未對應)</td>` : `<td class="ok">${escapeHtml(String(r.order))}</td>`;
+      const usCell = (r.us === null) ? `<td class="bad">(未對應)</td>` : `<td class="ok">${escapeHtml(String(r.us))}</td>`;
+      const availCell = (r.avail === null) ? `<td class="bad">(無)</td>` : `<td class="ok">${escapeHtml(String(r.avail))}</td>`;
+      const daysCell = (r.days === null) ? `<td class="bad">(不可算)</td>` : `<td class="ok">${escapeHtml(fmtDays(r.days))}</td>`;
+
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td>${escapeHtml(r.sku)}</td>
+          <td>${escapeHtml(r.asin)}</td>
+          ${speedCell}
+          ${orderCell}
+          ${usCell}
+          ${availCell}
+          ${daysCell}
+        </tr>
+      `;
+    }).join("");
+
+    mainWrap.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>SKU</th><th>ASIN</th><th>速度</th><th>訂單</th><th>美國總數</th><th>可售總量</th><th>可銷售天數</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+  }
+
+  function renderNewOrder() {
+    const rows = applyFactoryFilter(newOrderRowsAll);
+    countNewOrderEl.textContent = String(rows.length);
+    if (rows.length === 0) { newOrderWrap.innerHTML = ""; return; }
+
+    const body = rows.map((r, idx) => {
+      const usCell = (r.us === null) ? `<td class="bad">(未提供)</td>` : `<td class="ok">${escapeHtml(String(r.us))}</td>`;
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td>${escapeHtml(r.sku)}</td>
+          <td class="ok">${escapeHtml(String(r.order))}</td>
+          ${usCell}
+        </tr>
+      `;
+    }).join("");
+
+    newOrderWrap.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>#</th><th>SKU</th><th>訂單</th><th>美國總數</th></tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+  }
+
+  function renderNewUS() {
+    const rows = applyFactoryFilter(newUSRowsAll);
+    // countNewUS 只有在展開時才顯示也可以，但這裡保留更新
+    countNewUSEl.textContent = String(rows.length);
+    if (rows.length === 0) { newUSWrap.innerHTML = ""; return; }
+
+    const body = rows.map((r, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${escapeHtml(r.sku)}</td>
+        <td class="ok">${escapeHtml(String(r.us))}</td>
+      </tr>
+    `).join("");
+
+    newUSWrap.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>#</th><th>SKU</th><th>美國總數</th></tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+  }
+
+  // ---- Export ----
+  async function copyToClipboard(text, okMsg) {
+    try { await navigator.clipboard.writeText(text); alert(okMsg); }
+    catch {
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy"); ta.remove();
+      alert(okMsg + "（備援方式）");
+    }
+  }
+  function download(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  function csvFromRows(headers, rows) {
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const head = headers.map(q).join(",");
+    const body = rows.map(r => r.map(q).join(",")).join("\n");
+    return head + "\n" + body;
+  }
+  function tsvFromRows(headers, rows) {
+    return [headers.join("\t"), ...rows.map(r => r.join("\t"))].join("\n");
+  }
+
+  function exportMainRowsFiltered() {
+    const rows = applyFactoryFilter(mainRowsAll);
+    const headers = ["SKU","ASIN","速度","訂單","美國總數","可售總量(美國+訂單)","可銷售天數"];
+    const body = rows.map(r => [
+      r.sku, r.asin,
+      (r.speed ?? ""),
+      (r.order ?? ""),
+      (r.us ?? ""),
+      (r.avail ?? ""),
+      (r.days === null ? "" : fmtDays(r.days))
+    ]);
+    return { headers, body };
+  }
+  function exportReorderRowsFiltered() {
+    const rows = applyFactoryFilter(reorderRowsAll);
+    const headers = ["SKU","ASIN","速度","訂單","美國總數","可售總量(美國+訂單)","可銷售天數"];
+    const body = rows.map(r => [
+      r.sku, r.asin, String(r.speed), String(r.order), String(r.us), String(r.avail), fmtDays(r.days)
+    ]);
+    return { headers, body };
+  }
+  function exportNewOrderRowsFiltered() {
+    const rows = applyFactoryFilter(newOrderRowsAll);
+    const headers = ["SKU","訂單","美國總數"];
+    const body = rows.map(r => [r.sku, String(r.order), (r.us ?? "").toString()]);
+    return { headers, body };
+  }
+  function exportNewUSRowsFiltered() {
+    const rows = applyFactoryFilter(newUSRowsAll);
+    const headers = ["SKU","美國總數"];
+    const body = rows.map(r => [r.sku, String(r.us)]);
+    return { headers, body };
+  }
+
+  // ---- UI wiring ----
+  document.getElementById("btnBuild").addEventListener("click", buildTables);
+
+  document.getElementById("btnClear").addEventListener("click", () => {
+    h10El.value = ""; ordersEl.value = ""; usEl.value = "";
+    mainRowsAll = []; reorderRowsAll = []; newOrderRowsAll = []; newUSRowsAll = [];
+    mainWrap.innerHTML = ""; reorderWrap.innerHTML = ""; newOrderWrap.innerHTML = ""; newUSWrap.innerHTML = "";
+    countMainEl.textContent = "0"; countReorderEl.textContent = "0"; countNewOrderEl.textContent = "0"; countNewUSEl.textContent = "0";
+    sumOrdersMainEl.textContent = "訂單總和：0"; sumUsMainEl.textContent = "美國總數總和：0";
+    sumAvailMainEl.textContent = "可售總量(美國+訂單)：0"; sumReorderAvailEl.textContent = "可售總量(美國+訂單)：0";
+    factoryMode = "all"; updateFactoryTag();
+    // ⑦維持收折（預設）
+    newUSDetails.open = false;
+  });
+
+  sortModeEl.addEventListener("change", () => buildTables());
+  daysThresholdEl.addEventListener("change", () => buildTables());
+
+  // Factory filter buttons
+  document.getElementById("btnHideTW").addEventListener("click", () => {
+    factoryMode = "hideTW"; updateFactoryTag(); renderAll();
+  });
+  document.getElementById("btnOnlyTW").addEventListener("click", () => {
+    factoryMode = "onlyTW"; updateFactoryTag(); renderAll();
+  });
+  document.getElementById("btnShowAll").addEventListener("click", () => {
+    factoryMode = "all"; updateFactoryTag(); renderAll();
+  });
+
+  // Export buttons
+  document.getElementById("btnCopyMainTSV").addEventListener("click", () => {
+    const ex = exportMainRowsFiltered();
+    copyToClipboard(tsvFromRows(ex.headers, ex.body), "已複製主表 TSV（含目前工廠篩選）。");
+  });
+  document.getElementById("btnDownloadMainCSV").addEventListener("click", () => {
+    const ex = exportMainRowsFiltered();
+    download("主表.csv", "\uFEFF" + csvFromRows(ex.headers, ex.body), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("btnCopyReorderTSV").addEventListener("click", () => {
+    const ex = exportReorderRowsFiltered();
+    copyToClipboard(tsvFromRows(ex.headers, ex.body), "已複製下單清單 TSV（含目前工廠篩選）。");
+  });
+  document.getElementById("btnDownloadReorderCSV").addEventListener("click", () => {
+    const ex = exportReorderRowsFiltered();
+    download("下單清單.csv", "\uFEFF" + csvFromRows(ex.headers, ex.body), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("btnCopyNewOrderTSV").addEventListener("click", () => {
+    const ex = exportNewOrderRowsFiltered();
+    copyToClipboard(tsvFromRows(ex.headers, ex.body), "已複製新品(訂單) TSV（含目前工廠篩選）。");
+  });
+  document.getElementById("btnDownloadNewOrderCSV").addEventListener("click", () => {
+    const ex = exportNewOrderRowsFiltered();
+    download("新品_訂單.csv", "\uFEFF" + csvFromRows(ex.headers, ex.body), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("btnCopyNewUSTSV").addEventListener("click", () => {
+    const ex = exportNewUSRowsFiltered();
+    copyToClipboard(tsvFromRows(ex.headers, ex.body), "已複製新品(美國總數) TSV（含目前工廠篩選）。");
+  });
+  document.getElementById("btnDownloadNewUSCSV").addEventListener("click", () => {
+    const ex = exportNewUSRowsFiltered();
+    download("新品_美國總數.csv", "\uFEFF" + csvFromRows(ex.headers, ex.body), "text/csv;charset=utf-8");
+  });
+
+  // ⑦ 預設收折
+  newUSDetails.open = false;
+  updateFactoryTag();
+})();
+</script>
+</body>
+</html>
