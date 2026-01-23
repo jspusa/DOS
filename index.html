@@ -280,6 +280,27 @@
       transition: box-shadow 0.2s, background 0.2s;
     }
     .order-generator #newItemGeneratorBtn:hover { box-shadow: 0 4px 24px #23baff74; background: #0aa2c3; }
+    .order-generator #discontinuedListBtn {
+      position: fixed; top: 22px; right: 86px;
+      background: linear-gradient(120deg,#ff6b6b 60%,#ff9a9a 100%);
+      color: #fff; border: none; border-radius: 50%; width: 40px; height: 40px;
+      cursor: pointer; font-weight: bold; font-size: 1.1rem;
+      box-shadow: 0 2px 12px rgba(255, 107, 107, 0.35);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 2100;
+      transition: box-shadow 0.2s, background 0.2s;
+    }
+    .order-generator #discontinuedListBtn:hover {
+      box-shadow: 0 4px 20px rgba(255, 107, 107, 0.5);
+      background: #ff5252;
+    }
+    .discontinued-text { color: #c62828; font-weight: 700; }
+    .discontinued-tag {
+      display: inline-block; margin-left: 6px; padding: 2px 7px;
+      border-radius: 999px; font-size: 11px; font-weight: 700;
+      background: #ffe5e5; color: #c62828; border: 1px solid #f2b3b3;
+    }
+    .discontinued-list-wrap { max-height: 380px; overflow: auto; }
     /* user-tip提示 */
     .order-generator .user-tip {
       position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%);
@@ -419,6 +440,30 @@
             <button id="newItemGeneratorBtn" title="新品產生器">
               <i class="fa-solid fa-plus"></i>
             </button>
+            <!-- 停產清單浮動按鈕 -->
+            <button id="discontinuedListBtn" title="停產清單">
+              <i class="fa-solid fa-ban"></i>
+            </button>
+            <!-- 停產清單 Modal -->
+            <div id="discontinuedModal" class="modal">
+              <div class="modal-content">
+                <span class="close-modal" onclick="closeDiscontinuedModal()">&times;</span>
+                <h2 style="color:#e53935;font-size:1.25rem;margin-bottom:16px;">
+                  <i class="fa-solid fa-ban"></i> 停產清單
+                </h2>
+                <div class="tableWrap discontinued-list-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>品號</th>
+                        <th>停產理由</th>
+                      </tr>
+                    </thead>
+                    <tbody id="discontinuedListBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
             <!-- 新品產生器 Modal -->
             <div id="newItemModal" class="modal">
               <div class="modal-content">
@@ -679,9 +724,36 @@ TTR01AM-4 14125
   </div>
 
   <!-- xlsx -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
 
 <script>
+const discontinuedSkuDefaults = [
+  "HDP01AM","ATR03","HDS03AM","VTB05-1","TTR05AM-1","VTB06-4","TPZL05","ATP05","ATZ03","ADT03",
+  "ATB03","TPZL01","GTT03","TPZ01AM-4","TRP05AM","TTRL05","TRP01AM-4","TTRL03","GBB01",
+  "ATN01","1ABRD001A0","GBS01","GBS03","1ABRD003A0","ASA01","ABM01","ATJ01","ACTL05","ASCL03",
+  "ACTL08","ACA01","ACA02","ACA03","VBW01","VBS03","VBB01","VBS01","TTR05AM","HDR01AM","GTC01",
+  "GCTL05","GCTL02","ATJL01"
+];
+const discontinuedSkuReasons = new Map(
+  discontinuedSkuDefaults.map(sku => [sku, "銷量不佳"])
+);
+["1ABRD001A0","1ABRD003A0","GTC01","ASA01","ATN01","ABM01"].forEach(sku => {
+  discontinuedSkuReasons.set(sku, "取消小包");
+});
+["ATJ01","ATJL01"].forEach(sku => {
+  discontinuedSkuReasons.set(sku, "原料因素");
+});
+const discontinuedSkuSet = new Set(discontinuedSkuReasons.keys());
+function normalizeSkuKey(sku) {
+  return String(sku ?? "").trim().toUpperCase();
+}
+function isDiscontinuedSku(sku) {
+  return discontinuedSkuSet.has(normalizeSkuKey(sku));
+}
+function getDiscontinuedReason(sku) {
+  return discontinuedSkuReasons.get(normalizeSkuKey(sku)) || "";
+}
+
 (() => {
   const h10El = document.getElementById('inputH10');
   const ordersEl = document.getElementById('inputOrders');
@@ -758,6 +830,13 @@ TTR01AM-4 14125
 
   function escapeHtml(s) {
     return (s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function renderSkuCell(sku) {
+    const isDiscontinued = isDiscontinuedSku(sku);
+    const label = escapeHtml(sku);
+    const tag = isDiscontinued ? ' <span class="discontinued-tag">停產</span>' : '';
+    const className = isDiscontinued ? 'discontinued-text' : '';
+    return `<td class="${className}">${label}${tag}</td>`;
   }
   function normalizeNumber(s) {
     if (s === null || s === undefined) return null;
@@ -981,7 +1060,7 @@ TTR01AM-4 14125
     const body = rows.map((r, idx) => `
       <tr>
         <td>${idx + 1}</td>
-        <td>${escapeHtml(r.sku)}</td>
+        ${renderSkuCell(r.sku)}
         <td class="ok">${escapeHtml(String(r.speed))}</td>
         <td class="ok">${escapeHtml(String(r.order))}</td>
         <td class="ok">${escapeHtml(String(r.us))}</td>
@@ -1017,7 +1096,12 @@ TTR01AM-4 14125
     }
     const threshold = Math.max(1, Number(daysThresholdEl.value || 180));
     const missing = [];
+    const skipped = [];
     rows.forEach(row => {
+      if (isDiscontinuedSku(row.sku)) {
+        skipped.push(row.sku);
+        return;
+      }
       const prod = getProductSpecByCode(row.sku);
       if (!prod) {
         missing.push(row.sku);
@@ -1028,6 +1112,9 @@ TTR01AM-4 14125
     });
     if (missing.length) {
       showTip(`以下 SKU 找不到品項資料：${missing.join(', ')}`, 'error');
+    }
+    if (skipped.length) {
+      showTip(`停產品項未加入訂單產生器：${skipped.join(', ')}`, 'error');
     }
   }
 
@@ -1044,7 +1131,7 @@ TTR01AM-4 14125
       return `
         <tr>
           <td>${idx + 1}</td>
-          <td>${escapeHtml(r.sku)}</td>
+          ${renderSkuCell(r.sku)}
           ${speedCell}
           ${orderCell}
           ${usCell}
@@ -1075,7 +1162,7 @@ TTR01AM-4 14125
       return `
         <tr>
           <td>${idx + 1}</td>
-          <td>${escapeHtml(r.sku)}</td>
+          ${renderSkuCell(r.sku)}
           <td class="ok">${escapeHtml(String(r.order))}</td>
           ${usCell}
         </tr>
@@ -1101,7 +1188,7 @@ TTR01AM-4 14125
     const body = rows.map((r, idx) => `
       <tr>
         <td>${idx + 1}</td>
-        <td>${escapeHtml(r.sku)}</td>
+        ${renderSkuCell(r.sku)}
         <td class="ok">${escapeHtml(String(r.us))}</td>
       </tr>
     `).join("");
@@ -1522,6 +1609,20 @@ const allProducts = [
       setTimeout(()=>{ tip.style.opacity=0; setTimeout(()=>tip.remove(),450); }, 1800);
     }
 
+    function renderDiscontinuedList() {
+      const body = document.getElementById('discontinuedListBody');
+      if (!body) return;
+      const rows = Array.from(discontinuedSkuReasons.entries())
+        .map(([sku, reason]) => ({ sku, reason }))
+        .sort((a, b) => a.sku.localeCompare(b.sku));
+      body.innerHTML = rows.map(row => `
+        <tr>
+          <td class="discontinued-text">${row.sku}<span class="discontinued-tag">停產</span></td>
+          <td>${row.reason}</td>
+        </tr>
+      `).join('');
+    }
+
     function getFilteredProducts(){
       if(currentCountry === 'Others'){
         return allProducts.filter(p => p.country !== 'VN' && p.country !== 'TW');
@@ -1643,10 +1744,27 @@ const allProducts = [
       }
     }
 
+    function applyDiscontinuedRowState(row, code) {
+      if (!row) return;
+      const discontinued = isDiscontinuedSku(code);
+      const skuCell = row.cells[1];
+      if (skuCell) {
+        skuCell.classList.toggle('discontinued-text', discontinued);
+        const tag = skuCell.querySelector('.discontinued-tag');
+        if (discontinued && !tag) {
+          skuCell.insertAdjacentHTML('beforeend', ' <span class="discontinued-tag">停產</span>');
+        }
+        if (!discontinued && tag) {
+          tag.remove();
+        }
+      }
+    }
+
     function addProduct(prod, quantity = null){
       const tbody = document.querySelector('#productTable tbody');
-      const existingRow = Array.from(tbody.querySelectorAll('tr')).find(r => r.cells[1].textContent === prod.productCode);
+      const existingRow = Array.from(tbody.querySelectorAll('tr')).find(r => r.dataset.product === prod.productCode);
       if(existingRow){
+        applyDiscontinuedRowState(existingRow, prod.productCode);
         if (quantity !== null && Number.isFinite(quantity)) {
           const qtyInput = existingRow.querySelector('.edit-quantity-input');
           if (qtyInput) {
@@ -1691,6 +1809,7 @@ const allProducts = [
       </tr>`;
       tbody.insertAdjacentHTML('beforeend', rowHTML);
       const newRow = tbody.lastElementChild;
+      applyDiscontinuedRowState(newRow, prod.productCode);
       updateRowNumbers();
       if (quantity !== null && Number.isFinite(quantity)) {
         const qtyInput = newRow.querySelector('.edit-quantity-input');
@@ -1961,12 +2080,21 @@ const allProducts = [
     function closeModal(){
       document.getElementById('boxSizeModal').style.display = 'none';
     }
+    function openDiscontinuedModal(){
+      renderDiscontinuedList();
+      document.getElementById('discontinuedModal').style.display = 'block';
+    }
+    function closeDiscontinuedModal(){
+      document.getElementById('discontinuedModal').style.display = 'none';
+    }
     window.onclick = (e) => {
       if(e.target === document.getElementById('boxSizeModal')) closeModal();
       if(e.target === document.getElementById('newItemModal')) closeNewItemModal();
+      if(e.target === document.getElementById('discontinuedModal')) closeDiscontinuedModal();
     }
     // 新品產生器
     document.getElementById('newItemGeneratorBtn').addEventListener('click', openNewItemModal);
+    document.getElementById('discontinuedListBtn').addEventListener('click', openDiscontinuedModal);
     function openNewItemModal(){
       document.getElementById('newItemModal').style.display = 'block';
     }
